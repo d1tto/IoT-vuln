@@ -55,3 +55,113 @@ a.interactive()
 ```
 
 <img src="img/image-20220529095742244.png" alt="image-20220529095742244" style="zoom:67%;" align = "left"/>
+
+I use qemu-user to emulate the binary. However, the program calls `apmib_XXX` family functions. These functions fail and the program cannot continue to run. ld.so in the firmware doesn't support LD_PRELOAD, so I can't hook apmib_XXX family functions. For this reason, I patched the related functions in libapmib.so in /lib, such as apmib_init, apmib_get, apmib_set, and apmib_update functions. 
+I use this ghidra script to do it.
+```java
+import ghidra.app.script.*;
+import ghidra.program.model.address.*;
+import ghidra.program.model.listing.*;
+import ghidra.program.model.mem.*;
+import java.util.*;
+import java.io.*;
+
+public class NopPatcher extends GhidraScript {
+
+    class PatchScope implements Comparable<PatchScope> {
+        Function fun;
+        int beginAddr;
+        int endAddr;
+
+        PatchScope(String name, String begin, String end) {
+            fun = getFunctionByName(name);
+            beginAddr = (int)addressToFileOffset(getAddressFactory().getAddress(begin));
+            endAddr = (int)addressToFileOffset(getAddressFactory().getAddress(end));
+        }
+
+        @Override
+        public int compareTo(PatchScope candidate) {
+            return this.beginAddr - candidate.beginAddr;
+        }
+        @Override
+        public String toString() {
+            return String.format("<%s, %x, %x>", fun.getName(), beginAddr, endAddr);
+        }
+    }
+
+    ArrayList<PatchScope> scopes = new ArrayList<PatchScope>();
+
+    @Override
+    public void run() throws Exception {
+		// String funname = "";
+        // Function fun = getFunctionByName(funname);
+        scopes.add(new PatchScope("apmib_set", "0x0018f24", "0x00194b0"));
+        scopes.add(new PatchScope("apmib_get", "0x00185f0", "0x0018910"));
+        scopes.add(new PatchScope("apmib_update", "0x00180c4", "0x00185b8"));
+        scopes.add(new PatchScope("apmib_init", "0x001ae38", "0x001aef8"));
+
+        Collections.sort(scopes);
+        println(scopes.toString());
+
+        File file = getProgramFile();
+        println(file.toPath().toString());
+        
+        FileInputStream fileInputStream = new FileInputStream(file);
+        byte[] fileContentBuffer = new byte[(int)file.length()];
+        fileInputStream.read(fileContentBuffer);
+        fileInputStream.close();
+
+        for (PatchScope scope : scopes) {
+            int begin = scope.beginAddr;
+            int end = scope.endAddr;
+            for (int i = begin; i < end; i++) {
+                fileContentBuffer[i] = 0;
+            }
+            printf("patch function <%s> is done\n", scope.fun.getName());
+        } 
+
+        String newFilePath = file.getParent() + File.separator + "new-" + file.getName();
+        println(newFilePath);
+        FileOutputStream fileOutputStream = new FileOutputStream(newFilePath);
+        fileOutputStream.write(fileContentBuffer);
+        fileOutputStream.close();
+    }
+
+    private long addressToFileOffset(Address addr) {
+        MemoryBlock[] memBlocks = getMemoryBlocks();
+        MemoryBlock targetMemBlock = null;
+        for (MemoryBlock mb : memBlocks) {
+            if (mb.contains(addr)) {
+                targetMemBlock = mb;
+                break;
+            }
+        }
+        if (targetMemBlock == null) {
+            return 0;
+        }
+        List<MemoryBlockSourceInfo> memoryBlockSourceInfos = targetMemBlock.getSourceInfos();
+        MemoryBlockSourceInfo targetSourceInfo = null;
+        for (MemoryBlockSourceInfo sourceInfo : memoryBlockSourceInfos) {
+            if (sourceInfo.contains(addr)) {
+                targetSourceInfo = sourceInfo;
+                break;
+            }
+        }
+        if (targetSourceInfo == null) {
+            return 0;
+        }
+        return targetSourceInfo.getFileBytesOffset(addr);
+    }
+
+    private Function getFunctionByName(String name) {
+        Function fun = getFirstFunction();
+        while (fun != null) {
+            if (fun.getName().equals(name))
+                return fun;
+            fun = getFunctionAfter(fun);
+        }
+        return null;
+    }
+}
+
+```
