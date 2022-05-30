@@ -54,7 +54,7 @@ a.sendline(data.encode())
 a.interactive()
 ```
 
-<img src="img/image-20220529095742244.png" alt="image-20220529095742244" style="zoom:67%;" align = "left"/>
+<img src="img/image-20220529095742244.png" alt="image-20220529095742244" style="zoom:67%;"/>
 
 I use qemu-user to emulate the binary. However, the program calls `apmib_XXX` family functions. These functions fail and the program cannot continue to run. ld.so in the firmware doesn't support LD_PRELOAD, so I can't hook apmib_XXX family functions. For this reason, I patched the related functions in libapmib.so in /lib, such as apmib_init, apmib_get, apmib_set, and apmib_update functions. 
 I use this ghidra script to do it.
